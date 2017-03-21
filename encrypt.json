@@ -1,0 +1,345 @@
+﻿{
+  "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "customer": {
+      "type": "string",
+      "defaultValue": "dinor",
+      "metadata": {
+        "description": "Name or abbreviation for the customer."
+      }
+    },
+    "vmAdminUsername": {
+      "type": "string",
+      "defaultValue": "dinor",
+      "metadata": {
+        "description": "The name of the administrator of the new VM and the domain. Exclusion list: 'admin','administrator"
+      }
+    },
+    "vmAdminPassword": {
+      "type": "securestring",
+      "defaultValue": "Corp123!!!!!",
+      "metadata": {
+        "description": "The password for the administrator account of the new VM and the domain"
+      }
+    },
+    "applicationName": {
+      "type": "string",
+      "defaultValue": "myapp",
+      "maxLength": 5,
+      "metadata": {
+        "description": "enter the application / services name."
+      }
+    },
+
+
+    "environment": {
+      "type": "string",
+      "defaultValue": "dt",
+      "allowedValues": [ "d", "t", "a", "p", "dt", "ap" ],
+      "metadata": {
+        "description": "enter environment for the deployment. input format - d=development, t=test, a=acceptance, p=production, dt=devtest, ap= acceptanceproduction. "
+      }
+    },
+    "zone": {
+      "type": "string",
+      "defaultValue": "m",
+      "allowedValues": [ "e", "i", "m", "p" ],
+      "metadata": {
+        "description": "The zone in which the vm will be placed. options - External, Internal, Management. PublicEdge"
+      }
+    },
+    "tier": {
+      "type": "string",
+      "defaultValue": "d",
+      "allowedValues": [ "f", "b", "d" ],
+      "metadata": {
+        "description": "enter the appropriate tier for subNet"
+      }
+    },
+    "vnetEnvironment": {
+      "type": "string",
+      "defaultValue": "dt",
+      "allowedValues": [ "d", "t", "a", "p", "dt", "ap" ],
+      "metadata": {
+        "description": "enter environment for the deployment. input format - d=development, t=test, a=acceptance, p=production, dt=devtest, ap= acceptanceproduction. "
+      }
+    },
+    "filesvrinstanceSize": {
+      "type": "string",
+      "defaultValue": "Standard_A4",
+      "metadata": {
+        "description": "Define the VMSize for the VM."
+      }
+    },
+
+    "aadClientID": {
+      "type": "string",
+      "defaultValue": "f0e3b718-fb05-46a2-9f99-d2beebe72f2b",
+      "metadata": {
+        "description": ""
+      }
+    },
+    "aadClientSecret": {
+      "type": "string",
+      "defaultValue": "*******",
+      "metadata": {
+        "description": ""
+      }
+    },
+    "keyEncryptionKeyURL": {
+      "type": "string",
+      "defaultValue": "https://encrypttest.vault.azure.net/keys/hskey/bbb0b6e7e0394307be2786bee36769ea",
+      "metadata": {
+        "description": ""
+      }
+    },
+    "keyVaultName": {
+      "type": "string",
+      "defaultValue": "encrypttest",
+      "metadata": {
+        "description": ""
+      }
+    },
+    "keyVaultResourceGroup": {
+      "type": "string",
+      "defaultValue": "sql1",
+      "metadata": {
+        "description": ""
+      }
+    },
+    "useExistingKek": {
+      "type": "string",
+      "defaultValue": "kek",
+      "metadata": {
+        "description": ""
+      }
+    }
+  },
+  "variables": {
+    //Dynamic Variables
+
+    // //Provide VM Image Details  -
+
+    "vm1Image": {
+      "Publisher": "MicrosoftWindowsServer",
+      "Offer": "WindowsServer",
+      "Sku": "2016-Datacenter" // common skus - 2008-R2-SP1, 2012-Datacenter, 2012-R2-Datacenter, 2016-Datacenter
+    },
+
+    // //Choose tier and SKU for storageacount. Cross matching premium with standard is not allowed. For blobstorage check if the region supports the selected Storage SKU.
+    "storage1": {
+      "skuTier": "Standard",
+      "skuName": "Standard_LRS", // skutype - Standard_LRS, Standard_GRS, Standard_RAGRS, Standard_ZRS, Premium_LRS
+      "kind": "Storage"
+    },
+
+    // Fixed variables
+
+    "Location": "we", //"[resourceGroup().location]",
+
+    "domainJoinOptions": "3",
+
+    "storageAccount1Name": "[toLower(concat(parameters('customer'),'sa',parameters('applicationName'),substring(variables('storage1').skuTier, 0, 1),parameters('environment'),'2'))]", //e.g. <customer>sa<application name><zone><storage tier><env><sequence number>
+    "privateIP": "10.0.240.37",
+    "vm1Name": "[toLower(concat(parameters('zone'),'-',parameters('applicationName'),'-',parameters('environment'),'-2'))]", // e.g. <zone>-<appl. / service name>-<environment>-<sequence number> . Note - Vm name cannot be more than 15 characters
+    "vm1NicName": "[toLower(concat(parameters('customer'),'-nic-',variables('vm1Name')))]", // e.g. <customer>-nic-<vm1Name>
+    "vm1OSDiskName": "[toLower(concat('osdisk-',variables('vm1Name')))]", // e.g. osdisk-<vm1Name>
+    "vm1Disk1Name": "[toLower(concat('datadisk-1-',variables('vm1Name')))]", //e.g. datadisk-<sequence number>-<vm1Name>
+    "vnetResourcegroup": "[toLower(concat(parameters('customer'),'-platform-vnet-',parameters('vnetEnvironment')))]", // e.g. <customer>-<category>-<application name>-<environment>
+    "Vnetname": "[toLower(Concat(parameters('customer'),'-vnet-',parameters('zone'),'-',variables('Location'),'-',parameters('environment')))]", // e.g. <customer>-vnet-<zone>-<location>-<environment>
+    "vnetID": "[resourceId(variables('vnetResourcegroup'),'Microsoft.Network/virtualNetworks', variables('Vnetname'))]",
+    "subnetName1": "[toLower(concat(parameters('tier'),'-',parameters('applicationName')))]", // e.g <tier>-<appl. / service name>
+    "subnetId1": "[concat(variables('vnetID'),'/subnets/',variables('subnetName1'))]", // e.g. VnetID/Subnets/f-infor
+    "vm1DNSLabelPrefix": "[toLower(concat(parameters('customer'),'-',parameters('zone'),'-',parameters('applicationName'),'-',parameters('environment'),'-2'))]", // e.g. <customer>-<zone>-<appl. / service name>-<env>
+    "availabilitySetName1": "[toLower(concat(parameters('customer'),'-as-',parameters('applicationName'),'-',parameters('environment')))]", //<customer>-as-<appl. / service name>-<environment>
+
+    //// Keyvault Settings
+    
+    //// Disk Encryption Settings
+    
+  },
+  "resources": [
+
+    // Storage account
+    {
+      "apiVersion": "2016-01-01",
+      "type": "Microsoft.Storage/storageAccounts",
+      "name": "[variables('storageAccount1Name')]",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "encryption": {
+          "keySource": "Microsoft.Storage",
+          "services": {
+            "blob": {
+              "enabled": true
+            }
+          }
+        }
+      },
+      "sku": {
+        "name": "[variables('storage1').skuName]",
+        "tier": "[variables('storage1').skuTier]"
+      },
+      "kind": "[variables('storage1').kind]"
+    },
+    // Storage account Diag
+    {
+      "apiVersion": "2016-01-01",
+      "type": "Microsoft.Storage/storageAccounts",
+      "name": "[concat(variables('storageAccount1Name'),'diag')]",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "encryption": {
+          "keySource": "Microsoft.Storage",
+          "services": {
+            "blob": {
+              "enabled": true
+            }
+          }
+        }
+      },
+      "sku": {
+        "name": "[variables('storage1').skuName]",
+        "tier": "[variables('storage1').skuTier]"
+      },
+      "kind": "[variables('storage1').kind]"
+    },
+    //NIC
+    {
+      "name": "[concat(variables('vm1NicName'))]",
+      "type": "Microsoft.Network/networkInterfaces",
+      "location": "[resourceGroup().location]",
+      "apiVersion": "2015-06-15",
+      "properties": {
+        "ipConfigurations": [
+          {
+            "name": "[concat('ipconfig')]",
+            "properties": {
+              "privateIPAllocationMethod": "Dynamic",
+
+              "subnet": {
+                "id": "/subscriptions/928f4e7e-2c28-4063-a56e-6f1e6f2bb73c/resourceGroups/sql1/providers/Microsoft.Network/virtualNetworks/WorkloadVNET/subnets/sqlSubnet"
+              }
+            }
+          }
+        ]
+      }
+    },
+    // Virtual Machine
+    {
+      "apiVersion": "2015-06-15",
+      "type": "Microsoft.Compute/virtualMachines",
+      "name": "[concat(variables('vm1Name'))]",
+      "location": "[resourceGroup().location]",
+      "dependsOn": [
+        "[variables('storageAccount1Name')]",
+        "[resourceId('Microsoft.Network/networkInterfaces', variables('vm1NicName'))]"
+
+      ],
+      "properties": {
+        "hardwareProfile": {
+          "vmSize": "[parameters('filesvrinstanceSize')]"
+        },
+        "osProfile": {
+          "computerName": "[concat(variables('vm1Name'))]",
+          "adminUsername": "[parameters('vmAdminUsername')]",
+          "adminPassword": "[parameters('vmAdminPassword')]"
+        },
+        "storageProfile": {
+          "imageReference": {
+            "publisher": "[variables('vm1Image').Publisher]",
+            "offer": "[variables('vm1Image').Offer]",
+            "sku": "[variables('vm1Image').Sku]",
+            "version": "latest"
+          },
+          "osDisk": {
+            "name": "osdisk",
+            "vhd": {
+              "uri": "[concat('http://',variables('storageAccount1Name'),'.blob.core.windows.net/vhds/', variables('vm1OSDiskName'),'.vhd')]"
+            },
+            "caching": "ReadWrite",
+            "createOption": "FromImage"
+          },
+          "dataDisks": [
+            {
+              "name": "[concat('datadisk-1-',variables('vm1Name'))]",
+              "vhd": {
+                "uri": "[concat('http://',variables('storageAccount1Name'),'.blob.core.windows.net/vhds/','datadisk-1-',variables('vm1Disk1Name'),'.vhd')]"
+              },
+              "caching": "None",
+              "createOption": "Empty",
+              "diskSizeGB": "1000",
+              "lun": 0
+            }
+          ]
+        },
+        "networkProfile": {
+          "networkInterfaces": [
+            {
+              "id": "[resourceId('Microsoft.Network/networkInterfaces',concat(variables('vm1NicName')))]"
+            }
+          ]
+        },
+        "diagnosticsProfile": {
+          "bootDiagnostics": {
+            "enabled": "true",
+            "storageUri": "[concat('http://',variables('storageAccount1Name'),'diag','.blob.core.windows.net')]"
+          }
+        }
+      }
+    },
+   
+    
+    
+
+
+  
+
+    //Update Encryption Settings
+
+    {
+      "name": "UpdateEncryptionSettings",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2015-01-01",
+      "dependsOn": [
+        "[concat('Microsoft.Compute/virtualMachines/', variables('vm1Name'))]"
+      ],
+      "properties": {
+        "mode": "Incremental",
+        "templateLink": {
+          "uri": "https://raw.githubusercontent.com/Azure/azure-quickstart-templates/master/201-encrypt-running-windows-vm/azuredeploy.json",
+          "contentVersion": "1.0.0.0"
+        },
+
+        "parameters": {
+
+          "aadClientID": {
+            "value": "[parameters('aadClientID')]"
+          },
+          "vmName": {
+            "value": "[variables('vm1Name')]"
+          },
+          "aadClientSecret": {
+            "value": "[parameters('aadClientSecret')]"
+          },
+          "keyVaultName": {
+            "value": "[parameters('keyVaultName')]"
+          },
+          "keyVaultResourceGroup": {
+            "value": "[parameters('keyVaultResourceGroup')]"
+          },
+          "useExistingKek": {
+            "value": "[parameters('useExistingKek')]"
+          },
+
+          "keyEncryptionKeyURL": {
+            "value": "[parameters('keyEncryptionKeyURL')]"
+          }
+        }
+      }
+    }
+  ],
+  "outputs": { }
+
+}
